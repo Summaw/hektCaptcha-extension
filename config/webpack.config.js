@@ -11,7 +11,7 @@ const config = (env, argv) =>
   merge(common, {
     entry: {
       popup: PATHS.src + '/popup.js',
-      contentScript: PATHS.src + '/contentScript.js',
+      hcaptcha: PATHS.src + '/hcaptcha.js',
       background: PATHS.src + '/background.js',
     },
     resolve: {
