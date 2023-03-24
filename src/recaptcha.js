@@ -38,7 +38,7 @@ function imageDataToTensor(image, dims) {
 
   // 3. Concatenate RGB to transpose [224, 224, 3] -> [3, 224, 224] to a number array
   const transposedData = redArray.concat(greenArray, blueArray);
-  console.log(transposedData.length);
+
   // 4. Convert to float32 and normalize to 1
   const float32Data = new Float32Array(transposedData.map((x) => x / 255.0));
 
@@ -322,11 +322,9 @@ class Time {
     // Wait for task to be available
     const { task, is_hard, cells, background_url, urls } =
       await on_task_ready();
-    console.log(task, is_hard, cells, background_url, urls);
-
-    const n = cells.length == 9 ? 3 : 4;
 
     const image_urls = [];
+    const n = cells.length == 9 ? 3 : 4;
     let clickable_cells = []; // Variable number of clickable cells if secondary images appear
     if (background_url === null) {
       for (let i = 0; i < urls.length; i++) {
@@ -342,61 +340,68 @@ class Time {
       clickable_cells = cells;
     }
 
+    const label_cv = {
+      bicycle: 'bicycle',
+      bicycles: 'bicycle',
+      bridge: 'bridge',
+      bridges: 'bridge',
+      bus: 'bus',
+      buses: 'bus',
+      car: 'car',
+      cars: 'car',
+      chimney: 'chimney',
+      chimneys: 'chimney',
+      crosswalk: 'crosswalk',
+      crosswalks: 'crosswalk',
+      'fire hydrant': 'fire hydrant',
+      motorcycle: 'motorcycle',
+      motorcycles: 'motorcycle',
+      mountain: 'mountain',
+      mountains: 'mountain',
+      'palm trees': 'palm tree',
+      stair: 'stair',
+      stairs: 'stair',
+      'traffic light': 'traffic light',
+      'traffic lights': 'traffic light',
+    };
     const featSession = await ort.InferenceSession.create(
-      `chrome-extension://${extension_id}/models/mobilenetv3.ort`
-    );
-    const classifierSession = await ort.InferenceSession.create(
-      `chrome-extension://${extension_id}/models/recaptcha.ort`
+      `chrome-extension://${extension_id}/models/mobilenetv3-large.ort`
     );
 
-    const label_cv = {
-      bicycle: 0,
-      bicycles: 0,
-      bridge: 1,
-      bridges: 1,
-      bus: 2,
-      car: 3,
-      cars: 3,
-      chimney: 4,
-      chimneys: 4,
-      crosswalk: 5,
-      crosswalks: 5,
-      'fire hydrant': 6,
-      motorcycle: 7,
-      motorcycles: 7,
-      mountain: 8,
-      mountains: 8,
-      other: 9,
-      'palm trees': 10,
-      stair: 9,
-      stairs: 9,
-      'traffic light': 12,
-      'traffic lights': 12,
-    };
     const data = [];
     const label = task
+      .replace('Select all squares with', '')
       .replace('Select all images with', '')
+      .trim()
       .replace(/^(a|an)\s+/i, '')
-      .trim();
-    console.log(label);
-
-    const image = await Jimp.default.read(background_url);
-    image.rgba(false);
+      .replace(/\s+/g, '_')
+      .toLowerCase();
 
     const subImages = [];
-    for (let i = 0; i < 3; i++) {
-      for (let j = 0; j < 3; j++) {
-        subImages.push(image.clone().crop(j * 100, i * 100, 100, 100));
+    if (background_url === null) {
+      for (let i = 0; i < image_urls.length; i++) {
+        const url = image_urls[i];
+        const subImage = await Jimp.default.read(url);
+        subImage.rgba(false);
+        subImages.push(subImage);
+      }
+    } else {
+      const image = await Jimp.default.read(background_url);
+      const cropSize = image.bitmap.width / n;
+      image.rgba(false);
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          subImages.push(image.clone().crop(j * cropSize, i * cropSize, cropSize, cropSize));
+        }
       }
     }
 
-    function softmax(x) {
-      const e_x = x.map((a) => Math.exp(a));
-      const sum = e_x.reduce((a, b) => a + b);
-      return e_x.map((a) => a / sum);
-    }
+    console.log(subImages);
+    const classifierSession = await ort.InferenceSession.create(
+      `chrome-extension://${extension_id}/models/${label_cv[label]}.ort`
+    );
 
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < subImages.length; i++) {
       const subImage = subImages[i];
       subImage.resize(224, 224, Jimp.RESIZE_BILINEAR);
       subImage.rgba(false);
@@ -407,22 +412,8 @@ class Time {
         input: feats,
       });
       const output = classifierOutputs[classifierSession.outputNames[0]].data;
-      const softmaxOutput = softmax(output);
-      const indices = [];
-      for (let i = 0; i < 3; i++) {
-        let maxIndex = 0;
-        for (let j = 1; j < softmaxOutput.length; j++) {
-          if (
-            softmaxOutput[j] > softmaxOutput[maxIndex] &&
-            indices.indexOf(j) === -1
-          ) {
-            maxIndex = j;
-          }
-        }
-        indices.push(maxIndex);
-      }
-      // if labels_cv[label] is in indices, then it is a match
-      data.push(indices.includes(label_cv[label]));
+      const argmaxValue = output.indexOf(Math.max(...output));
+      data.push(argmaxValue == 1);
     }
 
     console.log(data);
@@ -437,7 +428,7 @@ class Time {
       // Click if not already selected
       if (!is_cell_selected(clickable_cells[i])) {
         clickable_cells[i]?.click();
-        await Time.sleep(500);
+        await Time.sleep(1000);
       }
     }
 
